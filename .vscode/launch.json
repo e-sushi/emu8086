@@ -1,0 +1,20 @@
+{
+    "configurations": [
+        {
+            "name": "Launch",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/debug/emu8086.exe",
+            "terminal": "console",
+            "presentation": {
+                "hidden": false,
+                "group": "",
+                "order": 1
+            },
+            "console": "internalConsole",
+            "stdio": null,
+            "reverseDebugging": false
+        }
+    ],
+
+}
