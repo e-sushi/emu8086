@@ -4,38 +4,9 @@ use std::fs as filesystem;
 use fstrings::*;
 use std::ops;
 
-// because rust is dumb, this macro is used to generate a function that converts integers to enum values
-// while the reason for needing this is stupid, i think the fact that this is possible is really cool
-macro_rules! enum_from_int {
-    ($enum_name:ident { $($variant_name:ident = $variant_value:expr),+ $(,)? }) => {
-        #[derive(Debug)]
-        enum $enum_name {
-            $($variant_name = $variant_value),+
-        }
-
-        // implement getting an enum value from a number
-        impl $enum_name {
-            fn from(value: u8) -> Option<Self> {
-                match value {
-                    $( $variant_value => Some($enum_name::$variant_name), )+
-                    _ => None,
-                }
-            }
-        }
-
-        impl std::fmt::Display for $enum_name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                match *self {
-                    $( $enum_name::$variant_name => write!(f, stringify!($variant_name)), )+
-                }
-            }
-        }
-    };
-}
-
 macro_rules! enum_display {
     ($enum_name:ident { $($variant_name:ident),+ $(,)? }) => {
-        #[derive(Copy,Clone)]
+        #[derive(Copy,Clone)] // necessary to use enum values in arrays
         enum $enum_name {
             $( $variant_name, )+
         }
