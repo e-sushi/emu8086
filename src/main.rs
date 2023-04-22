@@ -106,33 +106,13 @@ fn main() {
         } else if hasbits!(byte 0b10001000) { // mov: register/memory to/from register
             out += "mov ";
             let d = hasbits!(byte 0b00000010); 
-            todo!(); // TODO(sushi) handle d 
             let w = hasbits!(byte 0b00000001);
             let byte2 = *iter.next().expect("unexpected eof. wanted byte 2 for mov:reg/mem<->reg");
             let mode = getbits!(byte2 0b11000000) >> 6;
             match mode {
-                0b00 => { // memory mode 
-                    // TODO(sushi) combine with following case
+                0b00 | 0b01 | 0b10 => { // memory mode, possibly 8/16 bit displacement follows
                     let regl = regtable[(w, getbits!(byte2 0b00111000) >> 3)];
-                    let rm = getbits!(byte2 0b00000111);
-                    out += &f!("{regl}, ");
-                    out += &match rm {
-                        0b000 => f!("[bx + si]"),
-                        0b001 => f!("[bx + di]"),
-                        0b010 => f!("[bp + si]"),
-                        0b011 => f!("[bp + di]"),
-                        0b100 => f!("[si]"),
-                        0b101 => f!("[di]"),
-                        0b111 => f!("[bx]"),
-                        0b110 => {
-                            todo!();
-                        }
-                        _=>todo!()
-                    }
-                }
-                0b01 | 0b10 => { // memory mode, 8/16 bit displacement follows
-                    let regl = regtable[(w, getbits!(byte2 0b00111000) >> 3)];
-                    out += &f!("{regl}, ");
+                    if d {out += &f!("{regl}, ");}
                     let rm = getbits!(byte2 0b000000111);
                     out += &match rm {
                         0b000 => {"[bx + si"}
@@ -145,29 +125,27 @@ fn main() {
                         0b111 => {"[bx"}
                         _=>panic!()
                     };
-                    if byte != 0 {
-                        out += &match mode {
+                    if byte != 0 && mode != 0b00 {
+                        match mode {
                             0b01 => {
                                 let byte3 = *iter.next().expect("unexpected eof. wanted byte 3 for mov:reg/mem<->reg");
                                 if byte3 != 0 {
-                                    format!(" + {}]", byte3.to_string())
-                                } else {
-                                    String::from("]")
-                                }
+                                    out += &format!(" + {}", byte3.to_string());
+                                } 
                             }
                             0b10 =>{
                                 let lower = *iter.next().expect("unexpected eof. wanted lower byte for mov:reg/mem<->reg");
                                 let upper = *iter.next().expect("unexpected eof. wanted upper byte for mov:reg/mem<->reg");
                                 let value = ((upper as u16) << 8) | (lower as u16);
                                 if value != 0 {
-                                    format!(" + {}]", value.to_string())
-                                } else {
-                                    String::from("]")
-                                }
+                                    out += &format!(" + {}", value.to_string());
+                                } 
                             }
                             _=>panic!()
                         };
                     } 
+                    out += &"]";
+                    if !d {out += &f!(", {regl}");}
                 }
                 0b11 => { // register mode
                     let regl = regtable[(w,getbits!(byte2 0b00000111) >> 0)];
