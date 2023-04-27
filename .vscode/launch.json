@@ -14,7 +14,6 @@
             "console": "internalConsole",
             "stdio": null,
             "reverseDebugging": true,
-            
         }
     ],
 
