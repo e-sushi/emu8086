@@ -1,10 +1,11 @@
 #![allow(bad_style)] // really dumb
 #![allow(unused)] // rust seems to be unable to actually tell when something is used or unused
-use std::{fs as filesystem, error::Error, io};
+#![feature(iter_intersperse)]
+use std::{fs as filesystem, error::Error, io, rc::Rc, cell::RefCell};
 use fstrings::*;
 use tui;
 use crossterm;
-use trees;
+use itertools::Itertools;
 
 macro_rules! enum_display {
     ($enum_name:ident { $($variant_name:ident),+ $(,)? }) => {
@@ -86,7 +87,273 @@ impl std::ops::Add<vec2> for vec2 {
     }
 }
 
+// fn parse<'a>(path:String) -> trees::Tree<Type<'a>> {
+//     use trees::*;
+//     let mut buffer = {
+//         let res = filesystem::read(path);
+//         if res.is_err() {
+//             println!("unable to open file due to: \"{}\"", res.err().unwrap());
+//             panic!();
+//         }
+//         String::from_utf8(res.unwrap()).unwrap()
+//     };
+//     let mut chars = buffer.chars().peekable();
+    
+//     fn eat_word(mut iter: &mut std::iter::Peekable<std::str::Chars>) -> String {
+//         let mut out = String::new();
+//         loop {
+//             match iter.peek() {
+//                 Some(c) => {
+//                     if !c.is_alphanumeric() {break;}
+//                     out.push(iter.next().unwrap())
+//                 }
+//                 None => {println!("unexpected end of file."); panic!();}
+//             }   
+//         }
+//         out
+//     }
+    
+
+
+//     fn eat_whitespace(mut iter: &mut std::iter::Peekable<std::str::Chars>) {
+//         match iter.peek() {
+//             Some(c) => {if c.is_whitespace() {return;}}
+//             None => {println!("unexpected eof"); panic!();}
+//         }
+//         loop {
+//             match iter.next(){
+//                 Some(c) => {if c.is_whitespace() {break;}}
+//                 None => { println!("unexpected eof"); panic!(); }
+//             }
+//         }
+//     }
+
+//     enum Node {
+//         next(Rc<Node>),
+//         prev(Rc<Node>),
+//         first_child(Rc<Node>)
+
+//     }
+
+//     enum Token<'a> {
+//         BitStream(&'a str),
+//         Conditional,
+//         QuestionMark,
+//         Equals,
+//         OrBar,
+//         OpenBrace,
+//         CloseBrace,
+//         Number(u8),
+//         Identifier(&'a str),
+//     }
+
+//     impl<'a> std::fmt::Display for Token<'a> {
+//         fn fmt(&self, f: &mut rust::Formatter<'_>) -> std::fmt::Result {
+//             match self {
+//                 Token::BitStream(s) => write!(f, "BitStream: {}", s),
+//                 Token::Conditional => write!(f, "Conditional"),
+//                 Token::QuestionMark => write!(f, "QuestionMark"),
+//                 Token::Equals => write!(f, "Equals"),
+//                 Token::OrBar => write!(f, "OrBar"),
+//                 Token::OpenBrace => write!(f, "OpenBrace"),
+//                 Token::CloseBrace => write!(f, "CloseBrace"),
+//                 Token::Number(n) => write!(f, "Number: {}", n),
+//                 Token::Identifier(str) => write!(f, "Identifier: {}", str)
+//             }
+//         }
+//     }
+
+    // enum ParseError<'a> {
+    //     InvalidToken(Token<'a>, Token<'a>),
+    //     NumberTooLarge(u64),
+    // }
+
+//     impl<'a> std::fmt::Display for ParseError<'a> {
+//         fn fmt(&self, f: &mut rust::Formatter<'_>) -> std::fmt::Result {
+//             use ParseError::*;
+//             match self {
+//                 InvalidToken(got,wanted) => write!(f, "InvalidToken: wanted {}, got {}", wanted, got),
+//                 NumberTooLarge(n) => write!(f, "NumberTooLarge: got {}, max is 255", n)
+//             }
+//         }
+//     }
+
+//     let blocks = buffer.split(&['(',')']).filter(|s|!s.is_empty());
+
+//     let mut out = Tree::new(Type::root);
+//     for mut chunk in &blocks.chunks(2) {
+//         let name = chunk.next().expect("FUCK!!!").trim();
+//         let lines = chunk.next().expect("RAAGAAGHAGAHGAH!!!!").lines();
+//         for line in lines {
+//             let mut parts = line.split(',');
+//             let mut tokens : Vec<Token> = Vec::new();
+//             for part in parts{
+//                 if part.starts_with(&['1','0']) {
+                    
+//                 }
+//             }
+//             let out = parse_line(&tokens.iter());
+//             match out {
+//                 Ok(r) => {
+
+//                 }
+//                 Err(e) => panic!("{}", e)
+//             }
+//         }
+//     }
+
+//     fn parse_line<'a>(mut root: &Tree<Type>, mut tokens: &std::slice::Iter<Token>) -> Result<Tree<Type<'a>>, ParseError<'a>>{
+//         let stream = tokens.next().expect("");
+//         match stream {
+//             Token::BitStream(s) => {
+//                 let mut chars = s.chars();
+//                 let first = chars.next().unwrap();
+//                 let mut out = Tree::new(if first == '0' {Type::bit(false)} else {Type::bit(true)});
+//                 for c in chars {
+//                     match c {
+//                         '0' => {
+//                             out.push_back(Tree::new(Type::bit(false)));
+//                             out = out.
+//                         }
+//                         '1' => out.push_back(Tree::new(Type::bit(true)))
+//                     }
+//                 }
+//                 return Ok(out);
+//             }
+//             e => return Err(ParseError::InvalidToken(*e, Token::BitStream("")))
+//         }
+
+//     }
+
+//     fn parse_part(part: &str){
+//         if part.chars().all(|c|(c=='0'||c=='1')) {
+//             for char in part.chars() {
+//                 tree.push_back(Tree::new(Type::bit(char == '1')));
+//             }
+//         } else if part.starts_with('?') {
+//             parse_conditional(part, tree);
+//         }
+//     }
+
+//     fn parse_conditional(cond: &str, mut tree: &mut Tree<Type>){
+//         if cond.starts_with("?") {
+//             parse_or(&cond[1..cond.find('{').expect("expected '{' for conditional")], tree);
+//         } else {
+//             parse_factor(cond, tree);
+//         }
+//     }
+
+//     fn parse_or(or: &str, mut tree: &mut Tree<Type>){
+//         let last : Option<Node<Type>> = None;
+//         for s in or.split('|') {
+//             parse_equality(s, tree);
+//             // match last {
+//             //     Some(mut t) => {
+//             //         let mut ornode = Tree::new(Type::or);
+//             //         ornode.push_back(t.detach());
+//             //         ornode.push_back(tree.pop_back().expect("where is that damn node"));
+//             //         tree.push_back(ornode)
+//             //     }
+//             //     None => {}
+//             // }
+//         }
+//         parse_equality(or, tree);
+//     }
+
+//     fn parse_equality(equal: &str, mut tree: &mut Tree<Type>) {
+
+//     }
+
+//     fn parse_factor(factor: &str, mut tree: &mut Tree<Type>){
+//         if factor.starts_with(|c:char|c.is_digit(10)) {
+//             tree.push_back(
+//                 Tree::new(
+//                     Type::number(
+//                         u16::from_str_radix(factor, 10).expect("failed to turn factor into u8")
+//                     )
+//                 )
+//             );
+//         } else {
+//             // tree.push_back(
+//             //     Tree::new(
+//             //         Type::id(factor)
+//             //     )
+//             // );
+//         }
+//     }
+
+//     fn parse_id(id: &str, mut tree: &mut Tree<Type>){
+//         match id {
+//             "d"   => tree.push_back(Tree::new(Type::d)),
+//             "w"   => tree.push_back(Tree::new(Type::w)),
+//             "rm"  => tree.push_back(Tree::new(Type::rm)),
+//             "mod" => tree.push_back(Tree::new(Type::mode)),
+//             "data-lo" | "data-hi" | "disp-lo" | "disp-hi" =>
+//                 tree.push_back(Tree::new(Type::byte)),
+//             _ => todo!()
+//         }
+//     }
+
+
+
+//     let mut eat_group_name = true;
+//     loop {
+//         if(eat_group_name){
+//             let name = {
+//                 let out = eat_word(&mut chars);
+//                 eat_whitespace(&mut chars);
+//                 let c = chars.next();
+//                 match c {
+//                     Some('{') => { eat_group_name = false; continue; }
+//                     Some(_) => {
+//                         println!("expected '{{' after group name.");
+//                         panic!();
+//                     }
+//                     None => {
+//                         println!("unexpected eof.");
+//                         panic!();
+//                     }
+//                 }
+//             };
+//         }else{
+//             match chars.next() {
+//                 Some(c) => {
+//                     match c {
+//                         '0' => out.push_back(Tree::new(Type::bit(false))),
+//                         '1' => out.push_back(Tree::new(Type::bit(true))),
+//                          _  => {
+//                             if c.is_alphabetic() {
+//                                 let word = eat_word(&mut chars);
+//                                 match word.as_str() {
+//                                     "d" => out.push_back(Tree::new(Type::d)),
+//                                     "w" => out.push_back(Tree::new(Type::w)),
+//                                     "mod" => out.push_back(Tree::new(Type::mode)),
+//                                     "reg" => out.push_back(Tree::new(Type::reg)),
+//                                     "data-lo" => out.push_back(Tree::new(Type::byte)),
+
+                                    
+//                                     _ => {
+//                                         println!("unexpected string.");
+//                                         panic!();
+//                                     }
+//                                 }
+//                             }
+//                         }
+//                     }
+//                 }
+//                 None => {
+//                     println!("unexpected eof."); panic!();
+//                 }
+//             }
+//         }
+//     }
+// }
+
 fn main() {
+
+    test();
+    // let tree = parse(String::from("src/instruction_table.sh"));
+
     let buffer = {
         // read file
         let res = filesystem::read("data/listing_0040_challenge_movs");
@@ -98,7 +365,6 @@ fn main() {
         res.unwrap()
     };
     
-    //ui();
 
     const rmtable : [&str;8] = [
         "[bx + si",
@@ -110,7 +376,8 @@ fn main() {
         "[bp",
         "[bx",
     ];
-
+        
+    let mut iter = buffer.iter();
     fn get_value(w:bool, mut iter: &mut std::slice::Iter<u8>) -> u16 {
         if w {
             let lower = *iter.next().expect("unexpected eof. wanted a lower byte for mov:imm->reg") as u16;
@@ -123,7 +390,6 @@ fn main() {
 
     // use an iterator, because we may want to consume multiple bytes 
     // in a loop, but for loops don't allow that 
-    let mut iter = buffer.iter();
     loop {
         let byte = *{ // TODO(sushi) we probably don't need to keep making stuff like byte2 and byte3, we just extract all the info we need from byte before continuing
             let next = iter.next();
@@ -131,6 +397,7 @@ fn main() {
             next.unwrap()
         };
         let mut out = String::from("");
+        // these if statements can probably be replaced by binary searching the bits 
         if        hasbits!(byte 0b10110000) { // mov: immediate to register  
             let w   = hasbits!(byte 0b00001000);
             out += &format!("mov {}, {}", 
@@ -214,7 +481,7 @@ fn main() {
             out += &format!("[{}]", if w {get16bitdisp!(iter)} else {get8bitdisp!(iter)});
             if mta { out += ", ax" }
         } else if hasbits!(byte 0b10001100) { // mov: register/memory to segment register or vice versa
-            todo!();
+            
         }
 
 

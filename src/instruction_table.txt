@@ -1,0 +1,26 @@
+mov(
+    100010, d, w, mod, reg, rm, disp-lo, ?w{ disp-hi };
+    1100011, w, mod, 000, rm, disp-lo, ?mod=2{ disp-hi }, data-lo, $w{ data-hi };
+    1011, w, reg, data-lo, ?w{ data-hi };
+    1010000, w, addr-lo, ?w{ addr-hi };
+    1010001, w, addr-lo, ?w{ addr-hi };
+    10001110, mod, 0, sr, rm, ?mod|rm=6{ disp-lo }, ?mod=2|rm=6{ disp-hi };
+    10001100, mod, 0, sr, rm, ?mod|rm=6{ disp-lo }, ?mod=2|rm=6{ disp-hi };
+)
+
+push(
+    11111111, mod, 110, rm, ?mod|rm=6{ disp-lo }, ?mod=2|rm=6{ disp-hi };
+    01010, reg;
+    000, sr, 110;
+)
+
+pop(
+    10001111, mod, 000, rm, ?mod|rm=6{ disp-lo }, ?mod=2|rm{ disp-hi };
+    01011, reg;
+    000, sr, 111;
+)
+
+xchg(
+    1000011, w, mod, reg, rm, ?mod|rm=6{ disp-lo }, ?mod=2|rm=6{ disp-hi };
+    10010, sr;
+)

@@ -1,0 +1,8 @@
+group = id "(" line ")"
+line = bitstream { "," part } ";"
+part = bitstream | conditional
+bitstream = ?contiguous string of 1 or 0?
+conditional = factor | "?" or "{" part "}"
+or = equality { "|" equality }
+equality = factor { "=" factor }
+factor = int | id
