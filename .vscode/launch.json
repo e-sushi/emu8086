@@ -4,7 +4,7 @@
             "name": "Launch",
             "type": "lldb",
             "request": "launch",
-            "program": "${workspaceFolder}/target/debug/emu8086.exe",
+            "program": "${workspaceFolder}/a.exe",
             "terminal": "integrated",
             "presentation": {
                 "hidden": false,
