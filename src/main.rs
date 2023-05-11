@@ -1,91 +1,100 @@
 #![allow(bad_style)] // really dumb
 #![allow(unused)] // rust seems to be unable to actually tell when something is used or unused
-#![feature(iter_intersperse)]
-use std::{fs as filesystem, error::Error, io, rc::Rc, cell::RefCell};
+use std::{fs as filesystem, error::Error, io, rc::Rc, cell::RefCell, slice::Iter};
 use fstrings::*;
 use tui;
 use crossterm;
 use itertools::Itertools;
+use either::{Either,Left,Right};
 
-macro_rules! enum_display {
-    ($enum_name:ident { $($variant_name:ident),+ $(,)? }) => {
-        #[derive(Copy,Clone)] // necessary to use enum values in arrays
-        enum $enum_name {
-            $( $variant_name, )+
-        }
-        impl std::fmt::Display for $enum_name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                match *self {
-                    $( $enum_name::$variant_name => write!(f, stringify!($variant_name)), )+
+struct Register {
+    high: u8,
+    low: u8
+}
+
+impl Register {
+    #[inline(always)]
+    fn set16(&mut self, val: u16) {
+        self.high = (val >> 8) as u8;
+        self.low = val as u8;
+    }
+}
+
+enum reg {
+    a(Register),
+    b(Register),
+    c(Register),
+    d(Register),
+    sp(u16),
+    bp(u16),
+    si(u16),
+    di(u16),
+}
+
+struct Registers {
+    a: Register,
+    b: Register,
+    c: Register,
+    d: Register,
+    sp: Register,
+    bp: Register,
+    si: Register,
+    di: Register,
+}
+
+impl Registers {
+    fn set_reg(&mut self, index: (bool, u8), val: u16) {
+        match index.0 {
+            true => {
+                match index.1 {
+                    0b000 => self.a.set16(val),
+                    0b001 => self.b.set16(val),
+                    0b010 => self.c.set16(val),
+                    0b011 => self.d.set16(val),
+                    0b100 => self.sp.set16(val),
+                    0b101 => self.bp.set16(val),
+                    0b110 => self.si.set16(val),
+                    0b111 => self.di.set16(val),
+                    _ => panic!()
+                }
+            }
+            false => {
+                match index.1 {
+                    0b000 => self.a.low = val as u8,
+                    0b001 => self.b.low = val as u8,
+                    0b010 => self.c.low = val as u8,
+                    0b011 => self.d.low = val as u8,
+                    0b100 => self.a.high = val as u8,
+                    0b101 => self.b.high = val as u8,
+                    0b110 => self.c.high = val as u8,
+                    0b111 => self.d.high = val as u8,
+                    _ => panic!()
                 }
             }
         }
-    }
+     }
 }
 
-// how this is implemented is definitely overkill, but i want to explore how rust works
-enum_display! {
-    reg {
-        ax, cx, dx, bx,
-        ah, ch, dh, bh,
-        al, cl, dl, bl,
-        sp, bp, si, di,
-    }
-}
-
-// HOLY SHIT THIS IS SO FUCKING STUPID!!!!!
-struct RegTable {
-    table: [[reg;8];2],
-}
-
-// I do not need to take in a tuple for this, I can just index the returned array
-// but this is a more interesting use of rust
-impl std::ops::Index<(bool, u8)> for RegTable {
-    type Output = reg;
-
-    fn index(&self, idx: (bool,u8)) -> &Self::Output {
-        // you cannot index an array by a boolean, you cannot coerce a boolean to an integer
-        // and you cannot implement the Index trait for arrays, so we have to use a match 
-        // to properly index the table 
-        match idx.0 {
-            false => &self.table[0][idx.1 as usize],
-            true => &self.table[1][idx.1 as usize]
-        }
-    }
-}
-
-const regtable : RegTable = RegTable{
-    table: [
-        [reg::al, reg::cl, reg::dl, reg::bl, reg::ah, reg::ch, reg::dh, reg::bh],
-        [reg::ax, reg::cx, reg::dx, reg::bx, reg::sp, reg::bp, reg::si, reg::di]
-    ]
+static registers : Registers = Registers{
+    a: Register{high:0,low:0},
+    b: Register{high:0,low:0},
+    c: Register{high:0,low:0},
+    d: Register{high:0,low:0},
+    sp: Register{high:0,low:0},
+    bp: Register{high:0,low:0},
+    si: Register{high:0,low:0},
+    di: Register{high:0,low:0},
 };
+
 
 // prevents from having to write out the value twice.
 // extreme amount of syntax for something that is just 
-// #define hasbits(bytes, value) bytes & value == value
-// in C
+// #define hasbits(bytes, value) bytes & value == value in C
 macro_rules! hasbits { ($bytes:ident $value:expr) => { $bytes & $value == $value } }
-
-
 
 // just a bit mask with &, but using a macro is more consistent with 'hasbits'
 macro_rules! getbits { ($byte:ident $value:expr) => { $byte & $value } }
 
-macro_rules! get8bitdisp { ($iter:ident) => {*$iter.next().unwrap() as u16} }
-macro_rules! get16bitdisp { ($iter:ident) => {((*$iter.next().unwrap() as u16) | ((*$iter.next().unwrap() as u16) << 8))} }
-
-struct vec2{
-    x:f32,
-    y:f32
-}
-
-impl std::ops::Add<vec2> for vec2 {
-    type Output = vec2;
-    fn add(self, rhs:vec2) -> Self::Output{
-        vec2{x: self.x + rhs.x, y: self.y + rhs.y}
-    }
-}
 fn main() {
 
     let buffer = &match filesystem::read("data/listing_0040_challenge_movs") {
@@ -113,9 +122,10 @@ fn main() {
         "ss",
         "ds",
     ];
+
         
     let mut iter = buffer.iter();
-    fn get_value(w:bool, mut iter: &mut std::slice::Iter<u8>) -> u16 {
+    fn get_value(w:bool, mut iter: &mut Iter<u8>) -> u16 {
         if w {
             let lower = *iter.next().expect("unexpected eof. wanted a lower byte for mov:imm->reg") as u16;
             let upper = *iter.next().expect("unexpected eof. wanted an upper byte for mov:imm->reg") as u16;
@@ -145,19 +155,6 @@ fn main() {
         let b5 = (byte >> 2) & 1 == 1;
         let b6 = (byte >> 1) & 1 == 1;
         let b7 = (byte >> 0) & 1 == 1;
-
-        // expects that the current byte is the opcode byte
-        fn eat_displacement(w:bool,d:bool,sr:bool,mut iter: &mut std::slice::Iter<u8>) -> String {
-            let out = String::new();
-
-            // let byte = *iter.next().unwrap();
-            // let mode = getbits!(byte 0b11000000) >> 6;
-            // let reg = if sr {
-                
-            // };
-
-            out
-        }
 
         // this humongous if statement is meant to act like a binary search for decoding
         // instructions. I didn't like the idea of have a very large if ladder for decoding the
@@ -767,72 +764,92 @@ fn main() {
         }
 
         #[inline(always)]
-        fn mov_regmem_tf_reg(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn mov_regmem_tf_reg(mut byte: u8, mut iter: &mut Iter<u8>) {
+            let d = hasbits!(byte 0b00000010);
+            let w = hasbits!(byte 0b00000001);
+            byte = *iter.next().unwrap();
+            let mode = getbits!(byte 0b11000000) >> 6;
+            let regl = registers.set_reg((w, getbits!(byte 0b00111000)), val)
+            match mode {
+                0b00 | 0b01 | 0b10 => {
+                    let rm = getbits!(byte 0b00000111);
+                    if mode == 0b00 && rm == 0b110 {
+
+                    } else {
+
+                    }
+                }
+                0b11 => {
+
+                }
+                _ => panic!()
+            }
+        }
+
+        #[inline(always)]
+        fn mov_imm_to_regmem(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn mov_imm_to_regmem(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn mov_imm_to_reg(byte: u8, mut iter: &mut Iter<u8>) {
+            let w = hasbits!(byte 0b00001000);
+            let reg = getbits!(byte 0b00000111);
+
+        }
+
+        #[inline(always)]
+        fn mov_mem_to_acc(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn mov_imm_to_reg(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn mov_acc_to_mem(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn mov_mem_to_acc(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn mov_regmem_to_seg(mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn mov_acc_to_mem(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn mov_seg_to_regmem(mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn mov_regmem_to_seg(mut iter: &mut std::slice::Iter<u8>) {
+        fn push_inc_dec_call_jmp_regmem(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn mov_seg_to_regmem(mut iter: &mut std::slice::Iter<u8>) {
+        fn push_reg(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn push_inc_dec_call_jmp_regmem(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn push_seg(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn push_reg(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn pop_regmem(mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn push_seg(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn pop_reg(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn pop_regmem(mut iter: &mut std::slice::Iter<u8>) {
+        fn pop_seg(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn pop_reg(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
-            todo!()
-        }
-
-        #[inline(always)]
-        fn pop_seg(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
-            todo!()
-        }
-
-        #[inline(always)]
-        fn xchg_regmem_w_reg(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn xchg_regmem_w_reg(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
@@ -842,7 +859,7 @@ fn main() {
         }
 
         #[inline(always)]
-        fn in_fixed(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn in_fixed(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
@@ -852,7 +869,7 @@ fn main() {
         }
 
         #[inline(always)]
-        fn out_fixed(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn out_fixed(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
@@ -867,17 +884,17 @@ fn main() {
         }
 
         #[inline(always)]
-        fn out_lea(mut iter: &mut std::slice::Iter<u8>) {
+        fn out_lea(mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn out_lds(mut iter: &mut std::slice::Iter<u8>) {
+        fn out_lds(mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn out_les(mut iter: &mut std::slice::Iter<u8>) {
+        fn out_les(mut iter: &mut Iter<u8>) {
             todo!()
         }
 
@@ -902,32 +919,32 @@ fn main() {
         }
 
         #[inline(always)]
-        fn add_regmem_w_reg_to_either(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn add_regmem_w_reg_to_either(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn add_adc_sub_sbb_cmp_and_or_imm_to_regmem(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn add_adc_sub_sbb_cmp_and_or_imm_to_regmem(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
         
         #[inline(always)]
-        fn add_imm_to_acc(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn add_imm_to_acc(byte: u8, mut iter: &mut Iter<u8>) {
            todo!()
         }
 
         #[inline(always)]
-        fn adc_regmem_w_reg_to_either(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn adc_regmem_w_reg_to_either(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn adc_imm_to_acc(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn adc_imm_to_acc(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
         
         #[inline(always)]
-        fn inc_regmem(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn inc_regmem(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
@@ -947,27 +964,27 @@ fn main() {
         }
 
         #[inline(always)]
-        fn sub_regmem_and_reg_to_either(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn sub_regmem_and_reg_to_either(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn sub_or_sbb_imm_from_regmem(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn sub_or_sbb_imm_from_regmem(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn sub_imm_from_acc(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn sub_imm_from_acc(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn sbb_regmem_from_reg_to_either(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn sbb_regmem_from_reg_to_either(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn sbb_imm_from_acc(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn sbb_imm_from_acc(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
@@ -977,17 +994,17 @@ fn main() {
         }
 
         #[inline(always)]
-        fn neg_mul_div_not_test(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn neg_mul_div_not_test(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn cmp_regmem_and_reg(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn cmp_regmem_and_reg(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn cmp_imm_and_acc(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn cmp_imm_and_acc(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
@@ -1002,12 +1019,12 @@ fn main() {
         }
 
         #[inline(always)]
-        fn cmp_aam(mut iter: &mut std::slice::Iter<u8>) {
+        fn cmp_aam(mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn cmp_aad(mut iter: &mut std::slice::Iter<u8>) {
+        fn cmp_aad(mut iter: &mut Iter<u8>) {
             todo!()
         }
 
@@ -1022,42 +1039,42 @@ fn main() {
         }
 
         #[inline(always)]
-        fn not(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn not(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn shl_sal_shr_sar_rol_ror_rcl_rcr(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn shl_sal_shr_sar_rol_ror_rcl_rcr(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn and_regmem_with_reg_to_either(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn and_regmem_with_reg_to_either(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn and_imm_to_acc(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn and_imm_to_acc(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn test_regmem_and_reg(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn test_regmem_and_reg(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn test_imm_and_acc(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn test_imm_and_acc(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn xor_regmem_and_reg_to_either(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn xor_regmem_and_reg_to_either(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn xor_imm_to_regmem_or_acc(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn xor_imm_to_regmem_or_acc(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         }
 
@@ -1092,37 +1109,37 @@ fn main() {
         }
 
         #[inline(always)]
-        fn call_direct_within_segment(mut iter: &mut std::slice::Iter<u8>) {
+        fn call_direct_within_segment(mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn call_indirect_within_segment(mut iter: &mut std::slice::Iter<u8>) {
+        fn call_indirect_within_segment(mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn call_direct_intersegment(mut iter: &mut std::slice::Iter<u8>) {
+        fn call_direct_intersegment(mut iter: &mut Iter<u8>) {
             todo!()
         }
         
         #[inline(always)]
-        fn call_indirect_intersegment(mut iter: &mut std::slice::Iter<u8>) {
+        fn call_indirect_intersegment(mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn jmp_direct_within_segment(mut iter: &mut std::slice::Iter<u8>) {
+        fn jmp_direct_within_segment(mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn jmp_direct_within_segment_short(mut iter: &mut std::slice::Iter<u8>) {
+        fn jmp_direct_within_segment_short(mut iter: &mut Iter<u8>) {
             todo!()
         }
 
         #[inline(always)]
-        fn jmp_direct_intersegment(mut iter: &mut std::slice::Iter<u8>) {
+        fn jmp_direct_intersegment(mut iter: &mut Iter<u8>) {
             todo!()
         }
 
@@ -1132,7 +1149,7 @@ fn main() {
         }
 
         #[inline(always)]
-        fn ret_within_segment_add_imm_to_sp(mut iter: &mut std::slice::Iter<u8>) {
+        fn ret_within_segment_add_imm_to_sp(mut iter: &mut Iter<u8>) {
             todo!()
         }
 
@@ -1142,7 +1159,7 @@ fn main() {
         }
 
         #[inline(always)]
-        fn ret_intersegment_add_imm_to_sp(mut iter: &mut std::slice::Iter<u8>) {
+        fn ret_intersegment_add_imm_to_sp(mut iter: &mut Iter<u8>) {
             todo!()
         }
 
@@ -1313,7 +1330,7 @@ fn main() {
         }
 
         #[inline(always)]
-        fn esc(byte: u8, mut iter: &mut std::slice::Iter<u8>) {
+        fn esc(byte: u8, mut iter: &mut Iter<u8>) {
             todo!()
         } 
 
