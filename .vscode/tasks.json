@@ -2,15 +2,16 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"type": "cargo",
-			"command": "build",
-			"args":[
+			"label": "build",
+			"type": "shell",
+			"command": "clang-cl",
+			"args": [
+				"src/main.c",
+				"/Zi",
+				"/Fdbuild/8086.pdb",
+				"/Febuild/8086.exe",
+				"/Fobuild/8086.o"
 			],
-			"problemMatcher": [
-				"$rustc"
-			],
-			"group": "build",
-			"label": "rust: cargo build",
 			"presentation": {
 				"echo": true,
 				"reveal": "always",
@@ -18,7 +19,11 @@
 				"panel": "shared",
 				"showReuseMessage": false,
 				"clear": true
-			}
+			},
+			"group": {
+                "kind": "build",
+                "isDefault": true
+            }
 		}
 	]
 }

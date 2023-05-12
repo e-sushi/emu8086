@@ -1,0 +1,1 @@
+clang-cl -v src/main.c /Zi

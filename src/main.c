@@ -1,14 +1,21 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#define DEBUG_PRINT 1
+
 typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned long u64;
 
-#define hasbits(b, m) ((b) & (m)) == (m)
-#define getbits(b, m) (b) & (m)
+typedef signed char s8;
+typedef signed short s16;
+typedef signed long s64;
+
+#define hasbits(b, m) (((b) & (m)) == (m))
+#define getbits(b, m) ((b) & (m))
 
 u8* stream;
+u8 memory[0xffffffff];
 
 typedef struct reg {
     union{
@@ -19,6 +26,8 @@ typedef struct reg {
     };
 } reg;
 
+
+
 struct{
     reg a,b,c,d;
     reg sp,bp,si,di;
@@ -27,38 +36,104 @@ struct{
 u16* get_reg16(u8 r) {
     switch(r) {
         case 0b000: return &registers.a.x;
-        case 0b001: return &registers.b.x;
-        case 0b010: return &registers.c.x;
-        case 0b011: return &registers.d.x;
+        case 0b001: return &registers.c.x;
+        case 0b010: return &registers.d.x;
+        case 0b011: return &registers.b.x;
         case 0b100: return &registers.sp.x;
         case 0b101: return &registers.bp.x;
         case 0b110: return &registers.si.x;
         case 0b111: return &registers.di.x;
     }
+    return 0;
 }
+
+char* get_reg_str16(u8 r) {
+    switch(r) {
+        case 0b000: return "ax";
+        case 0b001: return "cx";
+        case 0b010: return "dx";
+        case 0b011: return "bx";
+        case 0b100: return "sp";
+        case 0b101: return "bp";
+        case 0b110: return "si";
+        case 0b111: return "di";
+    }
+    return 0;
+}
+
 
 u8* get_reg8(u8 r) {
     switch(r) {
         case 0b000: return &registers.a.l;
-        case 0b001: return &registers.b.l;
-        case 0b010: return &registers.c.l;
-        case 0b011: return &registers.d.l;
+        case 0b001: return &registers.c.l;
+        case 0b010: return &registers.d.l;
+        case 0b011: return &registers.b.l;
         case 0b100: return &registers.a.h;
-        case 0b101: return &registers.b.h;
-        case 0b110: return &registers.c.h;
-        case 0b111: return &registers.d.h;
+        case 0b101: return &registers.c.h;
+        case 0b110: return &registers.d.h;
+        case 0b111: return &registers.b.h;
     }
+    return 0;
 }
 
-u16 get_value16() {
+char* get_reg_str8(u8 r) {
+    switch(r) {
+        case 0b000: return "al";
+        case 0b001: return "cl";
+        case 0b010: return "dl";
+        case 0b011: return "bl";
+        case 0b100: return "ah";
+        case 0b101: return "ch";
+        case 0b110: return "dh";
+        case 0b111: return "bh";
+    }
+    return 0;
+}
+
+u8 get_next_byte() {
+    return *(++stream);
+}
+
+u16 get_next_word() {
     u8 low = *(++stream);
     u8 high = *(++stream);
     return ((u16)high) << 8 | (u16)low;
 }
 
-u8 get_value8() {
-    return *(++stream);
+u16 get_rm_displacement(u8 rm) {
+    switch(rm) {
+        case 0b000: return registers.b.x  + registers.si.x; 
+        case 0b001: return registers.b.x  + registers.di.x; 
+        case 0b010: return registers.bp.x + registers.si.x; 
+        case 0b011: return registers.bp.x + registers.di.x; 
+        case 0b100: return registers.si.x;                  
+        case 0b101: return registers.di.x;                  
+        case 0b110: return registers.bp.x;                  
+        case 0b111: return registers.b.x;
+    }
+    __debugbreak();
+    return 0;
 }
+
+char* get_rm_displacement_str(u8 rm) {
+    switch(rm) {
+        case 0b000: return "bx+si"; 
+        case 0b001: return "bx+di"; 
+        case 0b010: return "bp+si"; 
+        case 0b011: return "bp+di"; 
+        case 0b100: return "si";                  
+        case 0b101: return "di";                  
+        case 0b110: return "bp";                  
+        case 0b111: return "bx";                   
+    }
+    __debugbreak();
+    return 0;
+}
+
+#define GLUE_(a,b) a##b
+#define GLUE(a,b) GLUE_(a,b)
+
+#define side_conditional_operation(o, ltr, l, r) do { if(ltr) { *(l) GLUE(o,=) *(r); } else { *(l) GLUE(o,=) *(r); } } while(0)
 
 void mov_regmem_tf_reg() {
     u8 byte = *stream;
@@ -66,466 +141,784 @@ void mov_regmem_tf_reg() {
     u8 w = hasbits(byte, 0b00000001);
     u8 byte2 = *(++stream);
     u8 mode = getbits(byte2, 0b11000000) >> 6;
-    switch(mode) {
+    u8 reg = getbits(byte2,  0b00111000) >> 3;
+    u8 rm = getbits(byte2,   0b00000111);
+    if(!mode && rm == 0b110) {
+        u16 addr = get_next_word();
+        if(w) side_conditional_operation(, d, get_reg16(reg), (u16*)(memory + addr));
+        else side_conditional_operation(, d, get_reg8(reg), memory + addr);
+        #if DEBUG_PRINT
+            printf("mov %s, [%d]\n", (w? get_reg_str16(reg) : get_reg_str8(reg)), addr);
+        #endif
+    } else switch(mode) {
         case 0b00:
         case 0b01:
-        case 0b10:{
-            u8 rm = getbits(byte2, 0b00000111);
-            if(rm == 0b110 && mode == 0b00) {
-                if(w) {
-
+        case 0b10:{ // displacement mode
+            s16 disp = get_rm_displacement(rm); 
+            if(mode == 0b01) disp += (s8)get_next_byte();
+            else if(mode == 0b10) disp += (s16)get_next_word();
+            if(w) side_conditional_operation(, d, get_reg16(reg), (u16*)(memory+disp));
+            else side_conditional_operation(, d, get_reg8(reg), memory+disp);
+            #if DEBUG_PRINT
+                // we dont want to put more on the actual code, so we lookback here instead of saving this value 
+                // before DEBUG_PRINT
+                s16 actual_disp = 0;
+                if(mode == 0b01) {
+                    actual_disp = (s8)*stream;
+                }else if(mode == 0b10){
+                    u8 high = *stream;
+                    u8 low = *(stream-1);
+                    actual_disp = (s16)(((u16)high) << 8 | (u16)low);
                 }
-                break;
+                if(w) {
+                    if(disp < 0){
+                        if(d) printf("mov %s, [%s%d]\n", get_reg_str16(reg), get_rm_displacement_str(rm), actual_disp);
+                        else  printf("mov [%s%d], %s\n", get_rm_displacement_str(rm), actual_disp, get_reg_str16(reg));
+                    }else if(actual_disp > 0) {
+                        if(d) printf("mov %s, [%s+%d]\n", get_reg_str16(reg), get_rm_displacement_str(rm), actual_disp);
+                        else  printf("mov [%s+%d], %s\n", get_rm_displacement_str(rm), actual_disp, get_reg_str16(reg));
+                    }else{
+                        if(d) printf("mov %s, [%s]\n", get_reg_str16(reg), get_rm_displacement_str(rm));
+                        else  printf("mov [%s], %s\n", get_rm_displacement_str(rm), get_reg_str16(reg));
+                    }
+                } else {
+                    if(actual_disp < 0){
+                        if(d) printf("mov %s, [%s%d]\n", get_reg_str8(reg), get_rm_displacement_str(rm), actual_disp);
+                        else  printf("mov [%s%d], %s\n", get_rm_displacement_str(rm), actual_disp, get_reg_str8(reg));
+                    }else if(actual_disp > 0) {
+                        if(d) printf("mov %s, [%s+%d]\n", get_reg_str8(reg), get_rm_displacement_str(rm), actual_disp);
+                        else  printf("mov [%s+%d], %s\n", get_rm_displacement_str(rm), actual_disp, get_reg_str8(reg));
+                    }else{
+                        if(d) printf("mov %s, [%s]\n", get_reg_str8(reg), get_rm_displacement_str(rm));
+                        else  printf("mov [%s], %s\n", get_rm_displacement_str(rm), get_reg_str8(reg));
+                    }
+                }
+            #endif 
+        }break;
+        case 0b11:{ // register mode
+            #define assign(l,r0,r1) if(w) side_conditional_operation(, d, get_reg16(l), &r0); else side_conditional_operation(, d, get_reg8(l), &r1);
+            #if DEBUG_PRINT
+                #define dprint(l,r0,r1)\
+                    if(w) if(d) printf("mov %s, %s\n", get_reg_str16(l), r0); else printf("mov %s, %s\n", r0, get_reg_str16(l));\
+                    else  if(d) printf("mov %s, %s\n", get_reg_str8(l), r1); else printf("mov %s, %s\n", r1, get_reg_str8(l));
+            #else
+                #define dprint(l,r0,e1)
+            #endif
+            switch(rm) {
+                case 0b000: assign(reg, registers.a.x, registers.a.l); dprint(reg, "ax", "al"); break;
+                case 0b001: assign(reg, registers.c.x, registers.c.l); dprint(reg, "cx", "cl"); break;
+                case 0b010: assign(reg, registers.d.x, registers.d.l); dprint(reg, "dx", "dl"); break;
+                case 0b011: assign(reg, registers.b.x, registers.b.l); dprint(reg, "bx", "bl"); break;
+                case 0b100: assign(reg, registers.sp.x, registers.a.h); dprint(reg, "sp", "ah"); break;
+                case 0b101: assign(reg, registers.bp.x, registers.c.h); dprint(reg, "bp", "ch"); break;
+                case 0b110: assign(reg, registers.si.x, registers.d.h); dprint(reg, "si", "dh"); break;
+                case 0b111: assign(reg, registers.di.x, registers.b.h); dprint(reg, "di", "bh"); break;
             }
-        }break; 
-
+            #undef assign
+            #undef dprint
+        }break;
     }
-
+    stream++;
 }
 
+
 void mov_imm_to_regmem() {
-    __debugbreak();
+    u8 byte = *stream;
+    u8 w = hasbits(byte, 0b00000001);
+    byte = *(++stream);
+    u8 mode = getbits(byte, 0b11000000) >> 6;
+    u8 rm = getbits(byte, 0b00000111);
+    if(!mode && rm == 0b110) {
+        u16 disp = get_next_word();
+        if(w) *(u16*)(memory+disp) = get_next_word();
+        else memory[disp] = get_next_byte();
+    } else switch(mode) {
+        case 0b00:
+        case 0b01:
+        case 0b10:{ // displacement mode
+            s16 disp = get_rm_displacement(rm);
+            if(mode == 0b01) disp += get_next_byte();
+            else if(mode == 0b10) disp += get_next_word();
+            if(w){
+                s16 imm = get_next_word();
+                *(u16*)(memory+disp) = imm;
+                #if DEBUG_PRINT
+                    if     (disp<0) printf("mov [%s%d], word %d\n", get_rm_displacement_str(rm), disp, imm);
+                    else if(disp>0) printf("mov [%s+%d], word %d\n", get_rm_displacement_str(rm), disp, imm);
+                    else            printf("mov [%s], word %d\n", get_rm_displacement_str(rm), imm);
+                #endif 
+            } else {
+                s8 imm = get_next_byte();
+                memory[disp] = imm;
+                #if DEBUG_PRINT
+                    if     (disp<0) printf("mov [%s%d], byte %d\n", get_rm_displacement_str(rm), disp, imm);
+                    else if(disp>0) printf("mov [%s+%d], byte %d\n", get_rm_displacement_str(rm), disp, imm);
+                    else            printf("mov [%s], byte %d\n", get_rm_displacement_str(rm), imm);
+                #endif 
+            }
+        }break;
+        case 0b11:{ // register mode
+            __debugbreak(); //TODO
+            #define assign(l,r0,r1) if(w) condassign(d, get_reg16(l), &r0); else condassign(d, get_reg8(l), &r1);
+            #if DEBUG_PRINT
+                #define dprint(l,r0,r1)\
+                    if(w) if(d) printf("mov %s, %s\n", get_reg_str16(l), r0); else printf("mov %s, %s\n", r0, get_reg_str16(l));\
+                    else  if(d) printf("mov %s, %s\n", get_reg_str8(l), r1); else printf("mov %s, %s\n", r1, get_reg_str8(l));
+            #else
+                #define dprint(l,r0,e1)
+            #endif
+            switch(rm) {
+                // case 0b000: assign(reg, registers.a.x,  registers.a.l); dprint(reg, "ax", "al"); break;
+                // case 0b001: assign(reg, registers.c.x,  registers.c.l); dprint(reg, "cx", "cl"); break;
+                // case 0b010: assign(reg, registers.d.x,  registers.d.l); dprint(reg, "dx", "dl"); break;
+                // case 0b011: assign(reg, registers.b.x,  registers.b.l); dprint(reg, "bx", "bl"); break;
+                // case 0b100: assign(reg, registers.sp.x, registers.a.h); dprint(reg, "sp", "ah"); break;
+                // case 0b101: assign(reg, registers.bp.x, registers.c.h); dprint(reg, "bp", "ch"); break;
+                // case 0b110: assign(reg, registers.si.x, registers.d.h); dprint(reg, "si", "dh"); break;
+                // case 0b111: assign(reg, registers.di.x, registers.b.h); dprint(reg, "di", "bh"); break;
+            }
+            #undef assign
+            #undef dprint
+        }break;
+    }
+    stream++;
 }
 
 void mov_imm_to_reg() {
-    __debugbreak();
+    u8 byte = *stream;
+    u8 w = getbits(byte, 0b00001000);
+    u8 reg = getbits(byte, 0b0000111);
+    if(w){
+        u16 imm = get_next_word();
+        *get_reg16(reg) = imm;
+        #if DEBUG_PRINT
+            printf("mov %s, %d\n", get_reg_str16(reg), imm);
+        #endif
+    }else{
+        u8 imm = get_next_byte();
+        *get_reg8(reg) = imm;
+        #if DEBUG_PRINT
+            printf("mov %s, %d\n", get_reg_str8(reg), imm);
+        #endif
+    }
+    stream++;
 }
 
 void mov_mem_to_acc() {
-    __debugbreak();
+    u8 byte = *stream;
+    u8 w = hasbits(byte, 0b00000001);
+    u16 addr;
+    if(w) {
+        addr = get_next_word();
+        registers.a.x = *(u16*)(memory + addr);
+    } else {
+        addr = get_next_byte();
+        registers.a.x = memory[addr];
+    }
+    #if DEBUG_PRINT
+        printf("mov ax, [%u]\n", addr);
+    #endif
+    stream++;
 }
 
 void mov_acc_to_mem() {
-    __debugbreak();
+    u8 byte = *stream;
+    u8 w = hasbits(byte, 0b00000001);
+    u16 addr;
+    if(w) {
+        addr = get_next_word();
+        *(u16*)(memory + addr) = registers.a.x;
+    } else {
+        addr = get_next_byte();
+        memory[addr] = registers.a.x;
+    }
+    #if DEBUG_PRINT
+        printf("mov [%u], ax\n", addr);
+    #endif
+    stream++;
 }
 
 void mov_regmem_to_seg() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void mov_seg_to_regmem() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void push_inc_dec_call_jmp_regmem() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void push_reg() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void push_seg() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void pop_regmem() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void pop_reg() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void pop_seg() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void xchg_regmem_w_reg() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void xchg_reg_w_acc() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void in_fixed() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void in_variable() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void out_fixed() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void out_variable() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void out_xlat() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void out_lea() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void out_lds() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void out_les() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void out_lahf() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void out_sahf() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void out_pushf() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void out_popf() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
+
+#define condadd(ltr, left, right) do{if(ltr) {*(left)+=*(right);} else {*(right)+=*(left);}}while(0)
 
 void add_regmem_w_reg_to_either() {
-    __debugbreak();
+    u8 byte = *stream;
+    u8 d = getbits(byte, 0b00000010);
+    u8 w = getbits(byte, 0b00000001);
+    byte = *(++stream);
+    u8 mode = getbits(byte, 0b11000000) >> 6;
+    u8 reg = getbits(byte, 0b00111000) >> 3;
+    u8 rm = getbits(byte, 0b00000111);
+    if(!mode && rm == 0b110) {
+        u16 addr = get_next_word();
+        if(w) condadd(d, get_reg16(reg), (u16*)(memory + addr));
+        else condadd(d, get_reg8(reg), memory + addr);
+        #if DEBUG_PRINT
+            printf("add %s, [%d]\n", (w? get_reg_str16(reg) : get_reg_str8(reg)), addr);
+        #endif
+    } else switch(mode) {
+        case 0b00:
+        case 0b01:
+        case 0b10:{ // displacement mode
+            s16 disp = get_rm_displacement(rm); 
+            if(mode == 0b01) disp += (s8)get_next_byte();
+            else if(mode == 0b10) disp += (s16)get_next_word();
+            if(w) side_conditional_operation(+, d, get_reg16(reg), (u16*)(memory+disp));
+            else side_conditional_operation(+, d, get_reg8(reg), memory+disp);
+            #if DEBUG_PRINT
+                // we dont want to put more on the actual code, so we lookback here instead of saving this value 
+                // before DEBUG_PRINT
+                s16 actual_disp = 0;
+                if     (mode == 0b01) actual_disp = (s8)*stream;
+                else if(mode == 0b10) actual_disp = (s16)(((u16)*stream) << 8 | (u16)*(stream-1));
+                if(disp < 0){
+                    if(d) printf("add %s, [%s%d]\n", (w? get_reg_str16(reg) : get_reg_str8(reg)), get_rm_displacement_str(rm), actual_disp);
+                    else  printf("add [%s%d], %s\n", get_rm_displacement_str(rm), actual_disp, (w? get_reg_str16(reg) : get_reg_str8(reg)));
+                }else if(actual_disp > 0) {
+                    if(d) printf("add %s, [%s+%d]\n", (w? get_reg_str16(reg) : get_reg_str8(reg)), get_rm_displacement_str(rm), actual_disp);
+                    else  printf("add [%s+%d], %s\n", get_rm_displacement_str(rm), actual_disp, (w? get_reg_str16(reg) : get_reg_str8(reg)));
+                }else{
+                    if(d) printf("add %s, [%s]\n", (w? get_reg_str16(reg) : get_reg_str8(reg)), get_rm_displacement_str(rm));
+                    else  printf("add [%s], %s\n", get_rm_displacement_str(rm), (w? get_reg_str16(reg) : get_reg_str8(reg)));
+                }
+            #endif 
+        }break;
+        case 0b11:{ // register mode
+            #define add(l,r0,r1) if(w) side_conditional_operation(+, d, get_reg16(l), &r0); else side_conditional_operation(+, d, get_reg8(l), &r1);
+            #if DEBUG_PRINT
+                #define dprint(l,r0,r1)\
+                    if(w) if(d) printf("add %s, %s\n", get_reg_str16(l), r0); else printf("add %s, %s\n", r0, get_reg_str16(l));\
+                    else  if(d) printf("add %s, %s\n", get_reg_str8(l), r1); else printf("add %s, %s\n", r1, get_reg_str8(l));
+            #else
+                #define dprint(l,r0,e1)
+            #endif
+            switch(rm) {
+                case 0b000: add(reg, registers.a.x,  registers.a.l); dprint(reg, "ax", "al"); break;
+                case 0b001: add(reg, registers.c.x,  registers.c.l); dprint(reg, "cx", "cl"); break;
+                case 0b010: add(reg, registers.d.x,  registers.d.l); dprint(reg, "dx", "dl"); break;
+                case 0b011: add(reg, registers.b.x,  registers.b.l); dprint(reg, "bx", "bl"); break;
+                case 0b100: add(reg, registers.sp.x, registers.a.h); dprint(reg, "sp", "ah"); break;
+                case 0b101: add(reg, registers.bp.x, registers.c.h); dprint(reg, "bp", "ch"); break;
+                case 0b110: add(reg, registers.si.x, registers.d.h); dprint(reg, "si", "dh"); break;
+                case 0b111: add(reg, registers.di.x, registers.b.h); dprint(reg, "di", "bh"); break;
+            }
+            #undef add
+            #undef dprint
+        }break;
+    }
+    stream++;
 }
 
-void add_adc_sub_sbb_cmp_and_or_imm_to_regmem() {
-    __debugbreak();
+
+void add_imm_to_regmem() {
+    u8 byte = *stream;
+    u8 s = hasbits(byte, 0b00000010);
+    u8 w = hasbits(byte, 0b00000001);
+    byte = *(++stream);
+    u8 mode = getbits(byte, 0b11000000) >> 6;
+    u8 rm = getbits(byte, 0b00000111);
+    if(!mode && rm == 0b110) {
+        u16 disp = get_next_word();
+        if(w) *(u16*)(memory+disp) = get_next_word();
+        else memory[disp] = get_next_byte();
+    } else switch(mode) {
+        case 0b00:
+        case 0b01:
+        case 0b10:{ // displacement mode
+            s16 disp = get_rm_displacement(rm);
+            if(mode == 0b01) disp += get_next_byte();
+            else if(mode == 0b10) disp += get_next_word();
+            if(w){
+                s16 imm = get_next_word();
+                *(u16*)(memory+disp) += imm;
+                #if DEBUG_PRINT
+                    s16 actual_disp = 0;
+                    if     (mode == 0b01) actual_disp = (s8)*stream;
+                    else if(mode == 0b10) actual_disp = (s16)(((u16)*stream) << 8 | (u16)*(stream-1));
+                    if     (actual_disp<0) printf("add [%s%d], word %d\n", get_rm_displacement_str(rm), actual_disp, imm);
+                    else if(actual_disp>0) printf("add [%s+%d], word %d\n", get_rm_displacement_str(rm), actual_disp, imm);
+                    else            printf("add [%s], word %d\n", get_rm_displacement_str(rm), imm);
+                #endif 
+            } else {
+                s8 imm = get_next_byte();
+                memory[disp] = imm;
+                #if DEBUG_PRINT
+                    s16 actual_disp = 0;
+                    if     (mode == 0b01) actual_disp = (s8)*stream;
+                    else if(mode == 0b10) actual_disp = (s16)(((u16)*stream) << 8 | (u16)*(stream-1));
+                    if     (actual_disp<0) printf("add [%s%d], byte %d\n", get_rm_displacement_str(rm), actual_disp, imm);
+                    else if(actual_disp>0) printf("add [%s+%d], byte %d\n", get_rm_displacement_str(rm), actual_disp, imm);
+                    else            printf("add [%s], byte %d\n", get_rm_displacement_str(rm), imm);
+                #endif 
+            }
+        }break;
+        case 0b11:{ // register mode
+             #define add(l,r0,r1) if(w) *get_reg16(l) +=  side_conditional_operation(+, d, get_reg16(l), &r0); else side_conditional_operation(+, d, get_reg8(l), &r1);
+            #if DEBUG_PRINT
+                #define dprint(l) printf("add %s, %d\n", l, imm); 
+            #else
+                #define dprint(l)
+            #endif
+            
+            if(w) { 
+                s16 imm = (s? get_next_byte() : get_next_word());
+                switch(rm) {
+                    case 0b000: registers.a.x  = imm; dprint("ax"); break;
+                    case 0b001: registers.c.x  = imm; dprint("cx"); break;
+                    case 0b010: registers.d.x  = imm; dprint("dx"); break;
+                    case 0b011: registers.b.x  = imm; dprint("bx"); break;
+                    case 0b100: registers.sp.x = imm; dprint("sp"); break;
+                    case 0b101: registers.bp.x = imm; dprint("bp"); break;
+                    case 0b110: registers.si.x = imm; dprint("si"); break;
+                    case 0b111: registers.di.x = imm; dprint("di"); break;
+                }
+            }else{
+                s8 imm = get_next_byte();
+                switch(rm) {
+                    case 0b000: registers.a.l = imm; dprint("al"); break;
+                    case 0b001: registers.c.l = imm; dprint("cl"); break;
+                    case 0b010: registers.d.l = imm; dprint("dl"); break;
+                    case 0b011: registers.b.l = imm; dprint("bl"); break;
+                    case 0b100: registers.a.h = imm; dprint("ah"); break;
+                    case 0b101: registers.c.h = imm; dprint("ch"); break;
+                    case 0b110: registers.d.h = imm; dprint("dh"); break;
+                    case 0b111: registers.b.h = imm; dprint("bh"); break;
+                }
+            }
+            
+            #undef add
+            #undef dprint
+        }break;
+    }
+    stream++;
 }
 
 void add_imm_to_acc() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void adc_regmem_w_reg_to_either() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void adc_imm_to_acc() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void inc_regmem() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void inc_reg() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void inc_aaa() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void inc_daa() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void sub_regmem_and_reg_to_either() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void sub_or_sbb_imm_from_regmem() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void sub_imm_from_acc() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void sbb_regmem_from_reg_to_either() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void sbb_imm_from_acc() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void dec_reg() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void neg_mul_div_not_test() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void cmp_regmem_and_reg() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void cmp_imm_and_acc() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void cmp_aas() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void cmp_das() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void cmp_aam() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void cmp_aad() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void cmp_cbw() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void cmp_cwd() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void not() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void shl_sal_shr_sar_rol_ror_rcl_rcr() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void and_regmem_with_reg_to_either() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void and_imm_to_acc() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void test_regmem_and_reg() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void test_imm_and_acc() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void xor_regmem_and_reg_to_either() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void xor_imm_to_regmem_or_acc() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void str_rep() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void str_movs() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void str_cmps() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void str_scas() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void str_lods() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void str_stds() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void call_direct_within_segment() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void call_indirect_within_segment() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void call_direct_intersegment() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void call_indirect_intersegment() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void jmp_direct_within_segment() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void jmp_direct_within_segment_short() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void jmp_direct_intersegment() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void ret_within_segment() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void ret_within_segment_add_imm_to_sp() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void ret_intersegment() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void ret_intersegment_add_imm_to_sp() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 // NOTE(sushi) the jump opcodes expect the  to have been incremented already
 void je_jz() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void jl_jnge() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void jle_jng() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void jb_jnae() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void jbe_jna() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void jp_jpe() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void jo() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void js() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void jne_jnz() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void jnl_jge() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void jnle_jg() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void jnb_jae() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void jnbe_ja() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void jnp_jpo() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void jno() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void jns() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void loop_() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void loopz_loope() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void loopnz_loopne() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void jcxz() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void interrupt_typed() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void interrupt_type_3() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void interrupt_on_overflow() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void interrupt_return() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void clear_carry() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void complement_carry() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void set_carry() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void clear_direction() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void set_direction() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void clear_interrupt() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void set_interrupt() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void halt() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void wait() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void esc() {
-    __debugbreak();
+    printf("%s\n", __func__);
 } 
 
 void lock() {
-    __debugbreak();
+    printf("%s\n", __func__);
 }
 
 void segment() {
-    __debugbreak();
+    printf("%s\n", __func__);
+}
+
+void add_adc_sub_sbb_cmp_and_or_imm_to_regmem() {
+    u8 type = getbits(*(stream + 1), 0b00111000);
+    switch(type) {
+        case 0b000: add_imm_to_regmem(); break;
+        default: __debugbreak();
+    }
 }
 
 void decode() {
@@ -828,7 +1221,11 @@ void decode() {
                                 }
                             }
                         } else { // ---------------------------------------- 100000xx 
-                            add_adc_sub_sbb_cmp_and_or_imm_to_regmem();
+                            switch(getbits(*(stream+1), 0b00111000)) {
+                                case 0b000: add_imm_to_regmem(); break;
+                                default: __debugbreak();
+                            }
+                            
                         }
                     }
                 }
@@ -1136,7 +1533,8 @@ void decode() {
 }
 
 int main() {
-    FILE* file = fopen("computer_enhance/perfaware/part1/listing_0042_completionist_decode","rb");
+    FILE* file;
+    fopen_s(&file, "computer_enhance/perfaware/part1/listing_0041_add_sub_cmp_jnz", "rb");
     if(!file) {
         printf("couldn't open file.");
     }
@@ -1161,5 +1559,8 @@ int main() {
         return 1;
     }
 
-    decode();
+    u8* stream_start = stream;
+    while(stream - stream_start < file_size){
+        decode();
+    }
 }

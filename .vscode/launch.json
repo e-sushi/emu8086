@@ -2,18 +2,21 @@
     "configurations": [
         {
             "name": "Launch",
-            "type": "lldb",
+            "type": "cppvsdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/a.exe",
-            "terminal": "integrated",
+            "program": "${workspaceFolder}/build/8086.exe",
+            "args": [],
             "presentation": {
                 "hidden": false,
                 "group": "",
-                "order": 1
+                "order": 1,
             },
-            "console": "internalConsole",
-            "stdio": null,
-            "reverseDebugging": true,
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "console": "integratedTerminal",
+            "preLaunchTask": "",
+            "internalConsoleOptions": "openOnSessionStart",
         }
     ],
 
